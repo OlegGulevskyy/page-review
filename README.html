@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Page review — comments and agent settings</title>
+<style>
+  body{max-width:780px;margin:48px auto;padding:0 24px;font:16px/1.65 system-ui,sans-serif;color:#24242b;background:#faf9f6}
+  h1,h2{line-height:1.2}h2{margin-top:32px}code{background:#eae9e4;padding:2px 5px;border-radius:4px;font-size:.9em}pre{background:#eae9e4;padding:16px;border-radius:8px;overflow:auto}pre code{padding:0}li{margin:8px 0}a{color:#865034}
+</style>
+<h1>Page review</h1>
+<p>Leave comment threads on a local HTML page or dev server. Select text and choose <strong>Comment</strong>, or Alt+click an element. An agent can answer questions and edit the page’s source.</p>
+<h2>Review completed work yourself</h2>
+<p>Agent replies leave threads open, even when the work is complete. Select the thread and click <strong>Resolve</strong> after reviewing the answer or changes. Resolved threads remain available in the <strong>Resolved</strong> and <strong>All</strong> tabs, and can be reopened.</p>
+<p>Clicking a thread takes you to its highlighted text or element. Text selections use their actual position, including selections that start after whitespace or live inside a scrolling container.</p>
+<h2>Choose the provider, model, and effort</h2>
+<ol>
+  <li>Open <strong>Comments → Agent settings</strong>.</li>
+  <li>Select <strong>Claude Code</strong> or <strong>Codex</strong>.</li>
+  <li>Choose a <strong>Model</strong> and <strong>Effort</strong>. Choose <strong>Custom model…</strong> to enter a model ID or alias. <strong>Default</strong> uses the CLI’s configuration.</li>
+  <li>Click <strong>Save</strong>. Settings apply to subsequent runs for every page on this site and persist across reloads. Active runs keep the settings they started with.</li>
+</ol>
+<p>Claude model suggestions use CLI aliases. Codex model suggestions and supported effort levels come from its local cached catalog when available. Custom IDs must be supported by the selected CLI and your account.</p>
+<p><strong>Use defaults</strong> removes this site’s override and follows the global runner settings. Switching provider starts a new agent session with access to the existing comment thread. Resetting an explicit model or effort to Default also starts a new session so the old override is not retained.</p>
+<p><strong>Off</strong> disables automatic replies, including work still waiting to start. <strong>Webhook</strong> uses the configured webhook; its receiver controls the model and effort. The local CLI must already be installed and signed in.</p>
+<h2>Command line</h2>
+<pre><code>page-review open ./report.html
+page-review open http://localhost:3000/ --project ~/dev/app
+page-review runner claude --model opus --effort high
+page-review runner codex --model YOUR_MODEL_ID --effort high
+page-review runner codex --model "" --effort ""
+page-review list
+page-review get THREAD_ID
+page-review reply THREAD_ID "Completed the requested change."
+page-review log THREAD_ID</code></pre>
+<p>The <code>runner</code> command changes global defaults. Site overrides take precedence. Agent replies cannot resolve threads; the legacy <code>--resolve</code> flag is ignored.</p>
+<h2>Storage and verification</h2>
+<p>Settings and site registrations live in <code>~/.page-review/db.json</code>. Comments on served files live in <code>.page-review.json</code> beside those files. Agent logs live in <code>~/.page-review/runs/</code>. <code>PAGE_REVIEW_HOME</code> and <code>PAGE_REVIEW_PORT</code> can isolate a test instance.</p>
+<p>Run <code>npm test</code> for regressions covering manual resolution, configuration validation and persistence, provider switching, fresh and resumed CLI arguments, queued-work cancellation, and text-anchor scrolling.</p>
+</html>
