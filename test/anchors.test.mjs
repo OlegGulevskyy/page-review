@@ -49,3 +49,24 @@ test("nested scroll containers and the page both move to the highlighted range",
   scrollToAnchor({ range: { startContainer: { parentElement: container }, getClientRects: () => [{ top: 1500, width: 200, height: 20 }] } });
   assert.deepEqual(scrolls, [["container", 910], ["page", 200]]);
 });
+
+test("a rewritten anchor keeps the first quoted text as original", async () => {
+  const { moveAnchor } = await import("../src/store.js");
+  const t = { anchor: { kind: "text", selector: "h2", exact: "When a block can hit", before: "21 Oct 2026. ", after: " A On start" } };
+  moveAnchor(t, { kind: "text", selector: "h2", exact: "The 4 points where billing can stop an agent", before: "21 Oct 2026. ", after: " A On start" });
+  assert.equal(t.anchor.exact, "The 4 points where billing can stop an agent");
+  assert.equal(t.anchor.original, "When a block can hit");
+  moveAnchor(t, { text: "Where billing stops an agent" });
+  assert.equal(t.anchor.exact, "Where billing stops an agent");
+  assert.equal(t.anchor.original, "When a block can hit", "later moves keep the first text");
+  assert.equal(t.anchor.before, "21 Oct 2026. ", "an agent rename keeps the surrounding context");
+  moveAnchor(t, { text: "When a block can hit" });
+  assert.equal(t.anchor.original, undefined, "renamed back: nothing to show");
+});
+
+test("an element anchor renamed by the agent updates its snippet", async () => {
+  const { moveAnchor } = await import("../src/store.js");
+  const t = { anchor: { kind: "element", selector: "h3", tag: "h3", snippet: "Mid-run" } };
+  moveAnchor(t, { text: "During a run" });
+  assert.deepEqual([t.anchor.snippet, t.anchor.original, t.anchor.exact], ["During a run", "Mid-run", undefined]);
+});

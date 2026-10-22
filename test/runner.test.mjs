@@ -87,7 +87,9 @@ test("a comment starts the agent in the project, the next one resumes the sessio
   const runs = fs.readFileSync(fakeLog, "utf8").trim().split("\n").map((l) => JSON.parse(l));
   assert.equal(runs.length, 1);
   assert.equal(fs.realpathSync(runs[0].cwd), fs.realpathSync(project), "runs in the project root, not the page directory");
-  assert.ok(runs[0].args.includes("--dangerously-skip-permissions"));
+  assert.ok(runs[0].args.includes("acceptEdits"));
+  assert.ok(!runs[0].args.includes("--dangerously-skip-permissions"));
+  assert.ok(runs[0].args.includes("--mcp-config"));
   assert.ok(!runs[0].args.includes("--resume"));
   assert.match(runs[0].args.at(-1), /demo page/, "site context is in the prompt");
   assert.match(runs[0].args.at(-1), /Only the user resolves threads/);
@@ -119,6 +121,8 @@ test("a comment starts the agent in the project, the next one resumes the sessio
   assert.equal(got.status, "open");
   const runs3 = fs.readFileSync(fakeLog, "utf8").trim().split("\n").map(JSON.parse);
   assert.equal(runs3[2].args[0], "exec");
+  assert.ok(runs3[2].args.includes("workspace-write"));
+  assert.ok(runs3[2].args.some((arg) => arg.startsWith("mcp_servers.page-review.command=")));
   assert.equal(runs3[2].args[runs3[2].args.indexOf("-m") + 1], "custom-codex");
   assert.ok(runs3[2].args.includes('model_reasoning_effort="high"'));
   assert.ok(!runs3[2].args.includes("resume"));
@@ -132,6 +136,22 @@ test("a comment starts the agent in the project, the next one resumes the sessio
   assert.equal(got.lastRun.model, null);
   assert.equal(got.lastRun.effort, null);
   await api("PATCH", `/sites/${site.id}`, { runner_settings: null });
+});
+
+test("an @-mentioned folder is suggested, remembered, and readable by the run", async () => {
+  const other = path.join(tmp, "other-api");
+  fs.mkdirSync(path.join(other, "routes"), { recursive: true });
+  const site = await api("POST", "/sites", { dir: pages });
+  const suggested = await api("GET", `/paths?site=${site.id}&q=../oth`);
+  assert.equal(suggested[0].path, other, "relative paths list from the project root");
+  const before = fs.readFileSync(fakeLog, "utf8").trim().split("\n").length;
+  const t = await api("POST", "/threads", { siteId: site.id, page: "/a.html", text: "match @../other-api/routes please" });
+  assert.deepEqual((await api("GET", `/threads/${t.id}`)).context_paths, [path.join(other, "routes")]);
+  await until(async () => (await api("GET", `/threads/${t.id}`)).lastRun?.endedAt);
+  const run = fs.readFileSync(fakeLog, "utf8").trim().split("\n").slice(before).map(JSON.parse)[0];
+  assert.equal(run.args[run.args.indexOf("--add-dir") + 1], path.join(other, "routes"));
+  assert.match(run.args.at(-1), /other-api\/routes\/` for context/);
+  assert.equal((await api("GET", `/paths?site=${site.id}&q=`))[0].path, path.join(other, "routes"), "recently mentioned comes first");
 });
 
 test("turning the runner off cancels a pending run", async () => {

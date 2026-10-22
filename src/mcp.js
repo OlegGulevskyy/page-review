@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // MCP server (stdio): lets a coding agent open pages for review, read comment threads,
-// reply to them and resolve them. Register once at user scope:
-//   claude mcp add -s user page-review -- node /path/to/page-review/src/mcp.js
+// and reply while leaving resolution to the user. Connect with page-review setup.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { api, openTarget } from "./control.js";
+import { VERSION } from "./package.js";
 
-const AGENT_NAME = process.env.PAGE_REVIEW_AGENT_NAME || "Claude";
-const server = new McpServer({ name: "page-review", version: "0.1.0" });
+const AGENT_NAME = process.env.PAGE_REVIEW_AGENT_NAME || "Agent";
+const server = new McpServer({ name: "page-review", version: VERSION });
 
 const text = (value) => ({ content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }] });
 const wrap = (fn) => async (args) => {
@@ -87,9 +87,11 @@ server.registerTool(
     title: "Read a review thread",
     description:
       "Read one thread in full: every message, the anchor (exact quoted text with surrounding prefix/suffix, CSS " +
-      "selector, nearest heading as `section`, or the element tag and snippet for element comments), the page URL, " +
+      "selector, nearest heading as `section`, or the element tag and snippet for element comments; `original` is the " +
+      "text first commented on when the page has since changed it), the page URL, " +
       "the local file, project_root (the project directory the file lives in: read its CLAUDE.md/AGENTS.md and search it " +
-      "for context) and site_context (notes on what the page is and where its source lives). Marks the thread as being " +
+      "for context), site_context (notes on what the page is and where its source lives) and context_paths (folders or " +
+      "files the user @-mentioned for context: read them as reference, do not edit them). Marks the thread as being " +
       "worked on, so the user sees that you picked it up.",
     inputSchema: { thread_id: z.string() },
   },
@@ -104,6 +106,7 @@ server.registerTool(
       file: t.file,
       project_root: t.project_root,
       site_context: t.site_context,
+      context_paths: t.context_paths,
       anchor: t.anchor,
       messages: t.messages.map((m) => ({ author: m.author, text: m.text, at: m.at })),
     };
@@ -117,14 +120,16 @@ server.registerTool(
     description:
       "Post a reply in a thread; it appears live in the user's browser. Say what you changed (and where, if it was " +
       "elsewhere on the page) or answer the question. Replies leave the thread open for the user to review and resolve. " +
-      "Short markdown works: **bold**, `code`, [links](https://…).",
+      "Short markdown works: **bold**, `code`, [links](https://…). If you rewrote the commented text itself, pass " +
+      "its new wording as anchor_text so the comment stays attached to it and shows what it was renamed from.",
     inputSchema: {
       thread_id: z.string(),
       text: z.string(),
+      anchor_text: z.string().optional().describe("The commented text as it now reads on the page, when your change rewrote it"),
     },
   },
-  wrap(async ({ thread_id, text: body }) => {
-    const t = await api("POST", `/threads/${thread_id}/messages`, { author: "agent", name: AGENT_NAME, text: body });
+  wrap(async ({ thread_id, text: body, anchor_text }) => {
+    const t = await api("POST", `/threads/${thread_id}/messages`, { author: "agent", name: AGENT_NAME, text: body, anchor_text });
     return { id: t.id, status: t.status, messages: t.messages.length };
   }),
 );

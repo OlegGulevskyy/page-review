@@ -1,0 +1,22 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Publish page-review to npm</title><style>body{font:16px/1.65 system-ui,sans-serif;color:#25352f;background:#f5f4ee;max-width:800px;margin:50px auto;padding:0 24px}h1{font-size:38px;letter-spacing:-1px}section{background:white;border:1px solid #dce1d8;border-radius:12px;padding:25px;margin:22px 0}pre{background:#203a2e;color:#f1f6ed;padding:18px;border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere}code{font:14px ui-monospace,monospace}a{color:#24644a}li{margin:8px 0}</style>
+<header><small>MAINTAINER GUIDE · VERSION 0.1.0</small><h1>Publish page-review</h1><p>The npm package is named <strong>page-review</strong>, with no organization or scope. It is MIT licensed. Publishing makes it publicly installable; these steps are for you to run when ready.</p></header>
+<section><h2>1. Check the package</h2><p>Open a terminal in the page-review project directory and run:</p><pre><code>npm ci
+npm test
+npm pack --dry-run</code></pre><p>The package includes <code>src/</code>, <code>skills/</code>, <code>examples/</code>, the HTML guides, README, and license. It excludes tests, personal review files, local configuration, and logs. Dependencies are installed automatically by npm.</p><p>To try the exact package before publishing:</p><pre><code>npm pack
+npm install -g ./page-review-0.1.0.tgz
+page-review help
+page-review setup
+page-review demo
+page-review status --open</code></pre><p>If upgrading a running copy, use <code>page-review restart</code> before setup. Wait for active agent runs to finish. Rerun setup after testing another installation location so agent tools point to your chosen installation.</p></section>
+<section><h2>2. Sign in and publish</h2><p>Create an account at <a href="https://www.npmjs.com/signup">npmjs.com</a> if needed. Use your own individual account; an organization is not required.</p><pre><code>npm login
+npm whoami
+npm view page-review name version</code></pre><p>If the final command returns E404, the name appears unclaimed. If it returns a package owned by someone else, choose another unscoped name and update the package metadata and installation instructions. Name availability can change until publication.</p><pre><code>npm publish --access public</code></pre><p>npm runs the tests before publishing. Follow npm’s sign-in and two-factor prompts. The package becomes public only after this command succeeds. See <a href="https://docs.npmjs.com/creating-and-publishing-unscoped-public-packages">npm’s public package guide</a> for account requirements.</p></section>
+<section><h2>3. Share the installation commands</h2><p>Your colleague needs Node.js 20.12 or newer and, for automatic replies, their own signed-in Claude Code or Codex installation.</p><pre><code>npm install -g page-review
+page-review setup
+page-review open ./report.html</code></pre><p>They can run <code>page-review demo</code> before opening their own file and <code>page-review guide</code> for the readable HTML instructions.</p></section>
+<section><h2>Future releases</h2><p>Update the version without automatically creating a Git commit or tag, test, then publish:</p><pre><code>npm version patch --no-git-tag-version
+npm test
+npm publish --access public</code></pre><p>Update versioned examples in this guide when preparing the next release. npm versions cannot be overwritten after publication. Users upgrade with:</p><pre><code>npm install -g page-review@latest
+page-review restart
+page-review setup</code></pre></section>
+<footer><a href="README.html">Read the user guide</a> · License: MIT</footer></html>

@@ -1,13 +1,14 @@
 // Local agent runner: answers a thread by running `claude` or `codex` headless in the project
 // directory the page lives in. One run per thread at a time; the session id is kept on the thread
 // so the next comment in the same thread resumes the same conversation.
-import { spawn } from "node:child_process";
+import spawn from "cross-spawn";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { now, pageUrl, threadSummary, DATA_DIR } from "./store.js";
+import { providerPath, mcpSpec } from "./integrations.js";
+import { contextPaths, tildify, within } from "./paths.js";
 
-export const DEFAULTS = { kind: "claude", permissions: "bypass", maxParallel: 3, timeoutMin: 20, model: null, effort: null };
+export const DEFAULTS = { kind: "claude", permissions: "accept-edits", maxParallel: 3, timeoutMin: 20, model: null, effort: null };
 export const KINDS = ["claude", "codex", "webhook", "none"];
 const WAKE_DEBOUNCE_MS = 2500;
 const RUNS_DIR = path.join(DATA_DIR, "runs");
@@ -93,8 +94,9 @@ export function createRunner({ db, saveDb, emitThread, scheduleWebhook, webhookF
     // An omitted CLI flag on resume can retain the old session setting instead of its default.
     const resetDefaults = ["model", "effort"].some((key) => !cfg[key] && thread.lastRun?.[key]);
     const session = thread.session?.kind === cfg.kind && !resetDefaults ? thread.session.id : null;
-    const prompt = buildPrompt(site, thread, db, Boolean(session));
-    const { cmd, args } = command(cfg, prompt, session, cwd);
+    const context = contextPaths(thread, site);
+    const prompt = buildPrompt(site, thread, db, Boolean(session), context);
+    const { cmd, args } = command(cfg, prompt, session, cwd, context);
 
     fs.mkdirSync(RUNS_DIR, { recursive: true });
     const logFile = path.join(RUNS_DIR, `${thread.id}.log`);
@@ -103,7 +105,8 @@ export function createRunner({ db, saveDb, emitThread, scheduleWebhook, webhookF
 
     const env = { ...process.env };
     // the server may have been spawned with a minimal PATH (from an MCP host): add the usual places
-    env.PATH = [env.PATH, path.join(os.homedir(), ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin"].filter(Boolean).join(":");
+    env.PATH = providerPath();
+    env.PAGE_REVIEW_AGENT_NAME = NAMES[cfg.kind];
     delete env.CLAUDECODE; // we may be running under Claude Code; the child is its own session
     delete env.CLAUDE_CODE_ENTRYPOINT;
 
@@ -164,11 +167,20 @@ export function createRunner({ db, saveDb, emitThread, scheduleWebhook, webhookF
   return { wake, canWake, active: () => [...active.keys()] };
 }
 
-export function command(cfg, prompt, session, cwd) {
+// `context` is what the user @-mentioned ([{ path, dir }]). Codex's sandbox already reads anywhere;
+// Claude needs the folders outside the project added, and is kept from editing them.
+export function command(cfg, prompt, session, cwd, context = []) {
   const bypass = cfg.permissions !== "accept-edits";
   if (cfg.kind === "codex") {
     const args = ["exec", "--json", "-C", cwd, "--skip-git-repo-check"];
-    args.push(bypass ? "--dangerously-bypass-approvals-and-sandbox" : "--full-auto");
+    if (bypass) args.push("--dangerously-bypass-approvals-and-sandbox");
+    else args.push("--sandbox", "workspace-write");
+    const spec = mcpSpec(cfg.kind);
+    for (const key of ["command", "args", "env"]) {
+      if (key === "env") {
+        for (const [name, value] of Object.entries(spec.env)) args.push("-c", `mcp_servers.page-review.env.${name}=${JSON.stringify(value)}`);
+      } else args.push("-c", `mcp_servers.page-review.${key}=${JSON.stringify(spec[key])}`);
+    }
     if (cfg.model) args.push("-m", cfg.model);
     if (cfg.effort) args.push("-c", `model_reasoning_effort=${JSON.stringify(cfg.effort)}`);
     if (session) args.push("resume", session, prompt);
@@ -176,12 +188,19 @@ export function command(cfg, prompt, session, cwd) {
     return { cmd: "codex", args };
   }
   const args = ["-p", "--output-format", "json"];
+  args.push("--mcp-config", JSON.stringify({ mcpServers: { "page-review": { type: "stdio", ...mcpSpec(cfg.kind) } } }));
   if (session) args.push("--resume", session);
   if (cfg.model) args.push("--model", cfg.model);
   if (cfg.effort) args.push("--effort", cfg.effort);
   if (bypass) args.push("--dangerously-skip-permissions");
   else args.push("--permission-mode", "acceptEdits", "--allowedTools", "mcp__page-review__*", "Bash(page-review:*)");
-  args.push(prompt);
+  const dirs = [...new Set(context.map((c) => (c.dir ? c.path : path.dirname(c.path))))].filter((d) => !within(cwd, d));
+  if (dirs.length) args.push("--add-dir", ...dirs);
+  // An ancestor of the project stays editable, or the project itself would be read-only.
+  const readOnly = dirs.filter((d) => !within(d, cwd));
+  if (readOnly.length) args.push("--disallowedTools", ...readOnly.map((d) => `Edit(/${d}/**)`));
+  // `--` stops variadic flags like --allowedTools from swallowing the prompt.
+  args.push("--", prompt);
   return { cmd: "claude", args };
 }
 
@@ -198,26 +217,33 @@ function sessionFrom(kind, out) {
   return m?.[1] || null;
 }
 
-export function buildPrompt(site, thread, db, resumed) {
+export function buildPrompt(site, thread, db, resumed, context = contextPaths(thread, site)) {
   const s = threadSummary(thread, db);
+  const refs = context.length
+    ? `The user pointed you at ${context.map((c) => `\`${tildify(c.path)}${c.dir ? "/" : ""}\``).join(", ")} for context (\`@path\` in their messages). ` +
+      `Read and search there as needed to answer; it is reference material, so do not edit it.`
+    : "";
   const url = pageUrl(site, thread.page);
   const read = `Read the thread in full with the \`review_get\` tool if the page-review MCP tools are available, otherwise with \`page-review get ${thread.id}\`; reply with \`review_reply\` or \`page-review reply ${thread.id} "text"\`. Leave the thread open after replying, even when the work is complete. Only the user resolves threads; do not call review_set_status to resolve or use --resolve.`;
   if (resumed) {
     return (
       `New message in page-review comment thread ${thread.id} on ${url}. ${read} ` +
-      `Read every message (the new one may change what was asked), do what it needs, reply in the thread, and leave it open for the user to review.`
+      `Read every message (the new one may change what was asked), do what it needs, reply in the thread, and leave it open for the user to review.` +
+      (refs ? ` ${refs}` : "")
     );
   }
   return [
     `Page-review comment thread ${thread.id} on ${url} is waiting for a reply.`,
     s.file ? `Page file: ${s.file}` : `The page is served by a dev server at ${site.target}.`,
     `Project: ${site.projectRoot || site.root} — you are running in it. It is the context for the page: read its CLAUDE.md or AGENTS.md if present, and search it when the comment needs something the page does not say.`,
+    refs,
     site.context ? `About this page (from whoever generated it): ${site.context}` : "",
     `Handle only this thread. ${read}`,
     `Read every message, not just the last. The anchor gives the quoted text (exact, with prefix/suffix), the nearest heading and a CSS path, or the element tag and snippet. Read the whole page source, not only that spot.`,
     `A question → answer it; change nothing unless the answer shows the page is wrong. A change → make it in the real source (never hand-edit a generated file: edit its generator and rebuild), at the quoted spot or wherever it belongs, and keep related parts consistent. Unclear → ask in the thread and leave it open.`,
     `Other runs may be editing the same files at the same time: make targeted edits and re-read a file before editing it.`,
     `Reply in the thread: what you changed and where, or the answer. Short; **bold**, \`code\` and links render. Leave it open for the user to review and resolve. The reply belongs in the thread, not only in your output.`,
+    `If your change rewrote the commented text itself, pass its new wording as anchor_text (\`--anchor-text\` for the CLI) when you reply, so the comment stays on it.`,
   ]
     .filter(Boolean)
     .join("\n");

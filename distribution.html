@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Distributing page-review through npm</title>
+<style>body{max-width:780px;margin:48px auto;padding:0 24px;font:16px/1.65 system-ui,sans-serif;background:#faf9f6;color:#24242b}h1,h2{line-height:1.2}h2{margin-top:30px}pre{padding:16px;background:#eae9e4;border-radius:8px;overflow:auto}code{font-size:.9em}li{margin:8px 0}a{color:#865034}</style>
+<h1>One npm package for page-review</h1>
+<p>Yes. The CLI, local web server, injected comments interface, MCP server, and skill files can ship together. npm installs the package and dependencies; an explicit setup command configures the colleague’s chosen coding-agent clients.</p>
+<h2>Proposed colleague workflow</h2>
+<p>The package name below is a placeholder. The setup command is proposed and has not been implemented.</p>
+<pre><code>npm install -g @your-org/page-review
+page-review setup
+page-review open ./report.html</code></pre>
+<p>npm exposes executable commands through the package’s <code>bin</code> field, which this project already defines. See <a href="https://docs.npmjs.com/cli/v11/configuring-npm/package-json/">npm’s package.json documentation</a>.</p>
+<h2>What setup would do</h2>
+<ol>
+<li>Detect supported agent clients and let the colleague choose Claude Code, Codex, or both.</li>
+<li>Install the bundled page-review skill into the selected client’s supported skills directory, with an explicit user or project scope.</li>
+<li>Register the bundled MCP server using a portable package command, preserving unrelated client configuration.</li>
+<li>Configure the preferred provider, model, effort, and runner permissions.</li>
+<li>Check prerequisites and explain any missing CLI or sign-in step. Repeated setup should update the same integration without duplicating it.</li>
+</ol>
+<p>The local review server already starts on demand. A separate server install or persistent terminal session is unnecessary. Skills teach the agent when and how to open reviews; MCP tools let it read and answer threads; the CLI can open a review directly without the skill.</p>
+<h2>What is ready, and what remains</h2>
+<p>Verified on 22 October 2026: <code>npm pack --dry-run --json</code> succeeds, and the package includes the CLI, server, browser client, and MCP source. There is no build step.</p>
+<p>Remaining work: add the skill to this repository, implement setup and removal of client integrations, expose a portable MCP entry point, define the published file list, choose the package name and license, and remove <code>private: true</code> when publishing is intended. That flag currently prevents registry publication; it does not mean “publish as a private package.” See <a href="https://docs.npmjs.com/cli/v11/configuring-npm/package-json/">npm’s private field documentation</a>.</p>
+<p>The current implementation is macOS-oriented: browser opening and the runner’s PATH handling need review before claiming Windows or Linux support. Setup should also handle upgrading a running server so a colleague does not keep using old code after updating the npm package.</p>
+<h2>Prerequisites and sharing options</h2>
+<p>The colleague needs Node.js/npm and an installed, authenticated agent CLI for automated replies. The package currently declares Node.js 20 or newer. An installer can help with provider installation, but the colleague must use their own provider account and complete sign-in.</p>
+<p>A public scoped package supports ordinary npm installs. A private scoped package limits distribution to authorized users or teams. See <a href="https://docs.npmjs.com/creating-and-publishing-scoped-public-packages/">public scoped publishing</a> and <a href="https://docs.npmjs.com/creating-and-publishing-private-packages/">private packages</a>.</p>
+<p>For an initial colleague trial, no registry is required: run <code>npm pack</code>, share the resulting archive yourself, and have the colleague run <code>npm install -g ./page-review-0.1.0.tgz</code>. npm supports installation from a local tarball. The current archive still needs manual skill and MCP setup. See <a href="https://docs.npmjs.com/cli/v11/commands/npm-install/">npm install</a>.</p>
+</html>

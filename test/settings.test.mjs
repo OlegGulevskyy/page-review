@@ -28,6 +28,8 @@ test("model and effort are passed on fresh and resumed runs for both CLIs", () =
       assert.ok(args.includes(kind === "claude" ? "--effort" : 'model_reasoning_effort="max"'));
       assert.equal(args.includes("session-id"), Boolean(session));
       assert.equal(args.at(-1), "prompt");
+      // claude's --allowedTools is variadic and would swallow the prompt without `--`.
+      if (kind === "claude") assert.equal(args.at(-2), "--");
     }
   }
 });

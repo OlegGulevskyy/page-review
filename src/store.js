@@ -8,8 +8,9 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
+import { contextPaths } from "./paths.js";
 
-export const DATA_DIR = process.env.PAGE_REVIEW_HOME || path.join(os.homedir(), ".page-review");
+export const DATA_DIR = path.resolve(process.env.PAGE_REVIEW_HOME || path.join(os.homedir(), ".page-review"));
 export const SITE_FILE = ".page-review.json"; // threads of a served directory
 const DB_FILE = path.join(DATA_DIR, "db.json");
 
@@ -70,24 +71,30 @@ export function siteIdFor(key) {
   return "s_" + crypto.createHash("sha1").update(key).digest("hex").slice(0, 8);
 }
 
-// The project a directory belongs to: the nearest ancestor (or the directory itself) that looks
-// like a project root. That is where the agent answering the comments should work from.
-const PROJECT_MARKERS = [".git", "CLAUDE.md", "AGENTS.md", "package.json", "pyproject.toml", "Cargo.toml", "go.mod", ".t3"];
-export function findProjectRoot(dir) {
-  let d = path.resolve(dir);
-  const home = os.homedir();
-  while (true) {
-    if (PROJECT_MARKERS.some((m) => fs.existsSync(path.join(d, m)))) return d;
-    const parent = path.dirname(d);
-    if (parent === d || d === home || parent === "/") return null;
-    d = parent;
-  }
-}
+// The project a directory belongs to lives with the @path helpers, which also need it.
+export { findProjectRoot } from "./paths.js";
 
 // Thread: { id, siteId, page, anchor, status: "open"|"resolved", agent: "idle"|"pending"|"working",
 //           messages: [{ id, author: "user"|"agent", text, at }], createdAt, updatedAt }
 // `page` is the path within the site (e.g. "/report.html" or "/dashboard").
-// `anchor` is { kind: "text"|"element", selector, exact, prefix, suffix, tag, snippet }.
+// `anchor` is { kind: "text"|"element", selector, exact, prefix, suffix, before, after, tag, snippet, original }.
+// `before`/`after` are the page text around the anchor (whitespace collapsed), used to find it again
+// after the anchored text is rewritten. `original` is the text first commented on, set once it changes.
+const quoteOf = (a) => (a?.kind === "element" ? a.snippet : a?.exact) || "";
+
+// Point a thread at its anchor's new place or text, keeping the first quoted text as `original`.
+// `next` is a full anchor from the browser, or { text } when an agent reports what it rewrote the quote to.
+export function moveAnchor(t, next) {
+  const prev = t.anchor || {};
+  const original = (prev.original ?? quoteOf(prev)).trim();
+  const anchor = next.text != null
+    ? { ...prev, [prev.kind === "element" ? "snippet" : "exact"]: String(next.text).slice(0, 600) }
+    : { ...next, kind: next.kind === "element" ? "element" : "text" };
+  if (quoteOf(anchor).trim() !== original) anchor.original = original;
+  else delete anchor.original;
+  t.anchor = anchor;
+  return t;
+}
 export function threadSummary(t, db) {
   const site = db.sites[t.siteId];
   const last = t.messages[t.messages.length - 1];
@@ -100,6 +107,8 @@ export function threadSummary(t, db) {
     project_root: site?.projectRoot || site?.root || undefined,
     url: site ? pageUrl(site, t.page) : undefined,
     quote: t.anchor?.exact || t.anchor?.snippet || "",
+    ...(t.anchor?.original ? { original_quote: t.anchor.original } : {}),
+    context_paths: contextPaths(t, site).map((c) => c.path),
     last_message: last ? `${last.author}: ${last.text}` : "",
     messages: t.messages.length,
     site_context: site?.context || null,

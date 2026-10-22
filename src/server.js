@@ -12,9 +12,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadDb, saveDb, newId, now, siteIdFor, threadSummary, pageUrl, findProjectRoot, DATA_DIR, SITE_FILE } from "./store.js";
+import { loadDb, saveDb, newId, now, siteIdFor, threadSummary, moveAnchor, pageUrl, findProjectRoot, DATA_DIR, SITE_FILE } from "./store.js";
 import { createRunner, runnerConfig, KINDS } from "./runner.js";
+import { contextPaths, suggestPaths } from "./paths.js";
 import { runnerChoices, updateRunnerSettings } from "./settings.js";
+import { buildStatus, statusHtml } from "./status.js";
+import { VERSION, PACKAGE_ROOT } from "./package.js";
 
 const CONTROL_PORT = Number(process.env.PAGE_REVIEW_PORT || 4848);
 const FIRST_SITE_PORT = CONTROL_PORT + 2;
@@ -91,7 +94,7 @@ function nextFreePort() {
   return p;
 }
 
-function registerSite({ dir, target, webhook, label, context, project_root, runner }) {
+function registerSite({ dir, target, webhook, label, context, project_root, runner, page }) {
   const key = dir ? `dir:${path.resolve(dir)}` : `proxy:${new URL(target).origin}`;
   const id = siteIdFor(key);
   const existing = db.sites[id];
@@ -108,6 +111,7 @@ function registerSite({ dir, target, webhook, label, context, project_root, runn
   if (webhook !== undefined) site.webhook = webhook || null;
   if (label) site.label = label;
   if (context !== undefined) site.context = context || null;
+  if (typeof page === "string" && page.startsWith("/") && !page.startsWith("//")) site.lastPage = page;
   db.sites[id] = site;
   saveDb(db);
   return startSite(site).then(() => site);
@@ -184,6 +188,14 @@ const siteView = (s) => ({
   webhook_scope: webhookScope(s).scope,
 });
 
+// Paths the user @-mentions come first in the next suggestions.
+function rememberPaths(site, text) {
+  const found = contextPaths({ messages: [{ author: "user", text }] }, site).map((c) => c.path);
+  if (!found.length) return;
+  db.config ||= {};
+  db.config.recentPaths = [...new Set([...found, ...(db.config.recentPaths || [])])].slice(0, 12);
+}
+
 function scheduleWebhook(site, thread, text) {
   const hook = webhookFor(site);
   if (!hook) return;
@@ -205,6 +217,7 @@ function scheduleWebhook(site, thread, text) {
         project_root: s.project_root || "",
         quote: s.quote,
         text,
+        context_paths: s.context_paths.join(","),
         pending_count: pending.length,
         pending_thread_ids: pending.map((t) => t.id).join(","),
       };
@@ -231,7 +244,8 @@ async function api(req, res, url) {
   const method = req.method;
   const q = url.searchParams;
 
-  if (parts[0] === "health") return send(res, 200, { ok: true, pid: process.pid, data_dir: DATA_DIR });
+  if (parts[0] === "health") return send(res, 200, { ok: true, name: "page-review", version: VERSION, pid: process.pid, data_dir: DATA_DIR });
+  if (parts[0] === "status" && method === "GET") return send(res, 200, buildStatus(db, { running: true, active: runner.active(), port: CONTROL_PORT, listening: [...listeners.keys()] }));
 
   if (parts[0] === "events") {
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
@@ -245,6 +259,8 @@ async function api(req, res, url) {
     });
     return;
   }
+
+  if (parts[0] === "paths" && method === "GET") return send(res, 200, suggestPaths(q.get("q") || "", db.sites[q.get("site")], db.config?.recentPaths));
 
   if (parts[0] === "config") {
     db.config ||= {};
@@ -343,6 +359,7 @@ async function api(req, res, url) {
         updatedAt: now(),
       };
       db.threads[t.id] = t;
+      rememberPaths(site, t.messages[0].text);
       saveDb(db);
       emitThread(t);
       runner.wake(site, t, t.messages[0].text);
@@ -358,7 +375,9 @@ async function api(req, res, url) {
       if (!b.text?.trim()) return send(res, 400, { error: "text is required" });
       const author = b.author === "agent" ? "agent" : "user";
       t.messages.push({ id: newId("m"), author, ...(author === "agent" && b.name ? { name: String(b.name).slice(0, 40) } : {}), text: b.text.trim(), at: now() });
+      if (author === "agent" && typeof b.anchor_text === "string" && b.anchor_text.trim() && t.anchor) moveAnchor(t, { text: b.anchor_text.trim() });
       if (author === "user") {
+        rememberPaths(site, b.text);
         t.status = "open";
         t.agent = runner.canWake(site) ? "pending" : "idle";
       } else {
@@ -369,6 +388,14 @@ async function api(req, res, url) {
       saveDb(db);
       emitThread(t);
       if (author === "user" && site) runner.wake(site, t, b.text.trim());
+      return send(res, 200, t);
+    }
+    if (method === "POST" && parts[2] === "anchor") {
+      const b = await readBody(req);
+      if (!b.anchor || typeof b.anchor !== "object") return send(res, 400, { error: "anchor is required" });
+      moveAnchor(t, b.anchor);
+      saveDb(db);
+      emitThread(t);
       return send(res, 200, t);
     }
     if (method === "POST" && parts[2] === "status") {
@@ -400,7 +427,8 @@ async function handle(req, res, site) {
       return send(res, 200, fs.readFileSync(CLIENT_JS), { "content-type": "text/javascript; charset=utf-8" });
     }
     if (url.pathname.startsWith("/__review/api")) return await api(req, res, url);
-    if (!site) return send(res, 200, { name: "page-review", sites: Object.keys(db.sites).length });
+    if (url.pathname === "/__review/guide") return send(res, 200, fs.readFileSync(path.join(PACKAGE_ROOT, "README.html")), { "content-type": "text/html; charset=utf-8" });
+    if (!site) return send(res, 200, statusHtml(buildStatus(db, { running: true, active: runner.active(), port: CONTROL_PORT, listening: [...listeners.keys()] })), { "content-type": "text/html; charset=utf-8" });
     return site.kind === "dir" ? serveFile(req, res, site, url) : proxy(req, res, site);
   } catch (e) {
     console.error(e);

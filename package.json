@@ -1,21 +1,32 @@
 {
   "name": "page-review",
   "version": "0.1.0",
-  "private": true,
+  "license": "MIT",
+  "keywords": ["html", "review", "comments", "claude", "codex", "mcp", "cli"],
+  "files": ["src/", "skills/", "examples/", "README.html", "PUBLISHING.html", "LICENSE"],
+  "publishConfig": { "access": "public" },
   "description": "Comment threads on any local HTML page or dev server, answered by a coding agent over MCP",
   "type": "module",
   "bin": {
-    "page-review": "src/cli.js"
+    "page-review": "src/cli.js",
+    "page-review-mcp": "src/mcp.js"
   },
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "prepublishOnly": "npm test"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.12.0"
   },
   "dependencies": {
+    "@clack/prompts": "^1.8.1",
     "@modelcontextprotocol/sdk": "^1.32.1",
+    "commander": "^14.0.3",
+    "cross-spawn": "^7.0.6",
+    "open": "^10.2.0",
+    "picocolors": "^1.1.1",
+    "smol-toml": "^1.9.1",
     "zod": "^4.6.7"
   }
 }
